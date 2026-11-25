@@ -1,4 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="270" viewBox="0 0 1000 270" font-family="'JetBrains Mono','Fira Code','Cascadia Code',Consolas,'DejaVu Sans Mono','Courier New',monospace" role="img"><title>Tech stack as a gated gearbox</title><style>
+text{white-space:pre}
 .flick{animation:flick 3.7s infinite}
 @keyframes flick{0%,100%{opacity:1}47%{opacity:1}48%{opacity:.55}49%{opacity:1}83%{opacity:.8}84%{opacity:1}}
 .blink{animation:blink 1s steps(1) infinite}@keyframes blink{50%{opacity:0}}

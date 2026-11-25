@@ -18,10 +18,6 @@
 </p>
 
 <p align="center">
-  <a href="https://tokscale.ai/u/ZH-NICO"><img src="https://tokscale.ai/api/embed/ZH-NICO/svg?template=terminal&color=monochrome&tokens=compact&cost=compact" alt="Tokscale Stats"></a>
-</p>
-
-<p align="center">
   <img src="assets/footer.svg" width="100%" alt="Arrivederci: F40 driving past a chequered flag">
 </p>
 

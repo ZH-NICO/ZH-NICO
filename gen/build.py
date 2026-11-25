@@ -2,7 +2,7 @@
 import math
 import os
 
-from f40 import frames, ROWS
+from f40 import frames, render, ROWS
 
 OUT = os.path.join(os.path.dirname(__file__), "..", "assets")
 FONT = "'JetBrains Mono','Fira Code','Cascadia Code',Consolas,'DejaVu Sans Mono','Courier New',monospace"
@@ -40,6 +40,7 @@ def frame_overlay(w, h):
 
 
 BASE_CSS = """
+text{white-space:pre}
 .flick{animation:flick 3.7s infinite}
 @keyframes flick{0%,100%{opacity:1}47%{opacity:1}48%{opacity:.55}49%{opacity:1}83%{opacity:.8}84%{opacity:1}}
 .blink{animation:blink 1s steps(1) infinite}@keyframes blink{50%{opacity:0}}
@@ -57,13 +58,35 @@ def typed(x, y, s, begin, size=13, fill=INK, cps=28, pitch=None):
             f'calcMode="discrete" values="{";".join(f"{i * pitch:.1f}" for i in range(len(s) + 2))}" fill="freeze"/></rect></clipPath>'
             f'<g clip-path="url(#{cid})">{text(x, y, s, size, fill, pitch=pitch)}</g>')
 
+CLS = {"B0": "#7a1300", "B1": "#b01800", "B2": "#ff2800", "B3": "#ff7a55", "B4": "#ffe2d6",
+       "G0": "#1b2530", "G1": "#41566b", "G2": "#a8c2d8", "T": "#4b4b55", "R0": "#9c9ca8", "R1": "#ececf2",
+       "K": "#3a3a43", "L": "#ff2a2a", "F": "#fff0b8", "S": "#240700"}
+
+
+def ascii_layers(rows, x0, y0, px, py, skip=("S",)):
+    """One <g fill> per colour class; each row becomes one <text> pinned to the column grid."""
+    out = []
+    for cls, col in CLS.items():
+        if cls in skip:
+            continue
+        g = []
+        for r, row in enumerate(rows):
+            s = "".join(ch if c == cls else " " for ch, c in row).rstrip()
+            if s:
+                lead = len(s) - len(s.lstrip())
+                s = s.lstrip()
+                g.append(f'<text x="{x0 + lead * px:.1f}" y="{y0 + r * py:.1f}" xml:space="preserve" textLength="{len(s) * px:.1f}" lengthAdjust="spacingAndGlyphs">{esc(s)}</text>')
+        if g:
+            out.append(f'<g fill="{col}">' + "".join(g) + "</g>")
+    return "".join(out)
+
 
 # ---------------------------------------------------------------- hero
 
 def hero(fr):
     W, H = 1000, 560
     n, period = len(fr), 7.2
-    cx0, cy0, px, py = 14, 152, 6.6, 11  # car grid origin, column pitch, row pitch
+    cx0, cy0, px, py = 16, 136, 4.4, 7.33  # car grid origin, column pitch, row pitch
     slot = 100 / n
     css = BASE_CSS + f"""
 .fr{{visibility:hidden;animation:spin {period}s infinite}}
@@ -97,21 +120,9 @@ def hero(fr):
              f'<textPath href="#ring" startOffset="0">{esc(ring)}<animate attributeName="startOffset" from="0" to="{circ:.0f}" dur="{period}s" repeatCount="indefinite"/></textPath></text>')
 
     # the car: n pre-rendered frames, one visible at a time
-    layers = [(" .,-~", "#8f1400"), (":;=!", RED), ("*#", HOT), ("$@", "#ffe3d6")]
-    b.append('<g filter="url(#glow)" font-size="11.4">')
+    b.append(f'<g font-size="{py * 1.02:.1f}" xml:space="preserve">')
     for i, rows in enumerate(fr):
-        g = [f'<g class="fr" style="animation-delay:{i * period / n:.3f}s">']
-        for chars, col in layers:
-            g.append(f'<g fill="{col}">')
-            for r, row in enumerate(rows):
-                t = "".join(ch if ch in chars and ch != " " else " " for ch in row).rstrip()
-                if t:
-                    lead = len(t) - len(t.lstrip())
-                    t = t.lstrip()
-                    g.append(f'<text x="{cx0 + lead * px:.1f}" y="{cy0 + r * py}" xml:space="preserve" textLength="{len(t) * px:.1f}" lengthAdjust="spacingAndGlyphs">{esc(t)}</text>')
-            g.append("</g>")
-        g.append("</g>")
-        b.append("".join(g))
+        b.append(f'<g class="fr" style="animation-delay:{i * period / n:.3f}s">' + ascii_layers(rows, cx0, cy0, px, py) + "</g>")
     b.append("</g>")
 
     # header bar
@@ -123,7 +134,7 @@ def hero(fr):
     b.append(f'<g font-size="60" font-weight="700" letter-spacing="6">'
              f'<text x="36" y="118" class="gl" fill="{GOLD}" opacity="0">ZH-NICO</text>'
              f'<text x="36" y="118" class="draw" filter="url(#glow)">ZH-NICO</text></g>')
-    b.append(typed(40, 142, "Informatiker · Applikationsentwickler · Schweiz", 2.4, 13, HOT))
+    b.append(typed(40, 142, "Software Developer · Application Development · Switzerland", 2.4, 13, HOT))
 
     # HUD spec sheet
     hx, hy = 686, 92
@@ -147,7 +158,7 @@ def hero(fr):
     b.append(text(hx + 6, yb + 54, "LAP", 10, DIM) + text(hx + 36, yb + 54, "1:27.4", 13, INK) +
              text(hx + 112, yb + 54, "Δ -0.38", 13, "#30d158") + text(hx + 182, yb + 54, "█", 13, RED, 'class="blink"'))
 
-    b.append(text(26, H - 16, "▲ 360° live ascii render · 60 frames · pure svg", 10, DIM))
+    b.append(text(26, H - 16, "▲ 360° live ascii render · 48 frames · pure svg", 10, DIM))
     b.append(text(W - 236, H - 16, "ROSSO CORSA  #FF2800", 10, RED))
     b.append(frame_overlay(W, H))
     return svg(W, H, "".join(b), "ZH-NICO — rotating ASCII F40")
@@ -235,8 +246,8 @@ def telemetry():
 
     # driver card
     px0, py0, P = 560, 46, 7.4
-    card = [("NAME", "Nico Schult"), ("HANDLE", "@ZH-NICO"), ("BASE", "ZH · Schweiz"),
-            ("ROLE", "Informatiker Applikationsentwicklung"), ("BUILDING", "ultraclaude · neon-strike"),
+    card = [("NAME", "Nico Schult"), ("HANDLE", "@ZH-NICO"), ("BASE", "Zurich area · Switzerland"),
+            ("ROLE", "Software / Application Developer"), ("BUILDING", "ultraclaude · neon-strike"),
             ("STACK", "JS · TS · Java · Docker"), ("FUEL", "espresso + clean commits")]
     b.append(text(px0, py0, "╔═ DRIVER TELEMETRY ═══════════════════════════════╗", 12, RED, pitch=P))
     for i, (k, v) in enumerate(card):
@@ -350,7 +361,7 @@ def gearbox():
 
 PROJECTS = [("01", "ultraclaude", ["Run a team of Claude Code agents in one", "window: roles, shared memory, messaging", "and a live overview."], "JavaScript", "#f7df1e"),
             ("02", "neon-strike", ["2D online arena shooter.", "Node + WebSockets, server-authoritative", "netcode."], "JavaScript", "#f7df1e"),
-            ("03", "uek335-movies", ["Movie app in TypeScript,", "built for ÜK 335."], "TypeScript", "#3178c6"),
+            ("03", "uek335-movies", ["Movie app in TypeScript,", "built for course 335."], "TypeScript", "#3178c6"),
             ("04", "minishop", ["Full-stack mini shop: Java backend,", "TypeScript frontend, dockerised."], "Java · TS", "#f89820")]
 
 
@@ -387,16 +398,13 @@ def footer(side):
     b.append(f'<g>{text(0, 186, "━━━━      " * 15, 12, GOLD, "opacity=\".35\"", pitch=7.2)}'
              f'<animateTransform attributeName="transform" type="translate" from="0 0" to="-72 0" dur=".25s" repeatCount="indefinite"/></g>')
     # side-view F40 passing by, with exhaust flames
-    rows = [r for r in side if r.strip()]
-    lo = min(len(r) - len(r.lstrip()) for r in rows)
-    y0 = 166 - len(rows) * 5
-    b.append(f'<g class="drive"><g fill="{RED}" filter="url(#glow)" font-size="5">')
-    for i, r in enumerate(rows):
-        t = r[lo:].rstrip()
-        lead = len(t) - len(t.lstrip())
-        b.append(f'<text x="{lead * 3:.0f}" y="{y0 + i * 5}" xml:space="preserve" textLength="{len(t.lstrip()) * 3:.1f}" lengthAdjust="spacingAndGlyphs">{esc(t.lstrip())}</text>')
-    b.append("</g>")
-    ey = y0 + (len(rows) - 6) * 5
+    rows = [r for r in side if any(c and c != "S" for _, c in r)]
+    lo = min(next(i for i, (_, c) in enumerate(r) if c and c != "S") for r in rows)
+    rows = [r[lo:] for r in rows]
+    fpx, fpy = 2.1, 3.5
+    y0 = 166 - len(rows) * fpy
+    b.append(f'<g class="drive"><g font-size="{fpy:.1f}" xml:space="preserve" filter="url(#glow)">{ascii_layers(rows, 0, y0, fpx, fpy)}</g>')
+    ey = y0 + (len(rows) - 7) * fpy
     b.append(f'<g>{text(-14, ey, "≈≈~~", 11, GOLD, "filter=\"url(#glow2)\"")}<animate attributeName="opacity" values="1;.3;1;.6;1" dur=".2s" repeatCount="indefinite"/></g>')
     b.append(f'{text(-220, ey - 30, "─── ── ─  ", 12, DIM)}{text(-260, ey - 4, "──── ─ ── ", 12, DIM)}</g>')
     # chequered flag (columns wave with staggered delays)
@@ -409,17 +417,17 @@ def footer(side):
             if ch != " ":
                 b.append(text(fx + c * 13, fy + r * 14, "██", 13, INK, f'style="animation-delay:-{c * .17:.2f}s"', pitch=6.5))
     b.append("</g>")
-    b.append(text(40, 44, "ARRIVEDERCI", 22, INK, 'font-weight="700" letter-spacing="8" filter="url(#glow)"'))
+    b.append(text(40, 44, "SEE YOU ON TRACK", 22, INK, 'font-weight="700" letter-spacing="8" filter="url(#glow)"'))
     b.append(text(42, 66, "thanks for the visit — drop a ★ if you liked the ride", 11, DIM))
     b.append(frame_overlay(W, H))
-    return svg(W, H, "".join(b), "Footer — F40 driving past a chequered flag")
+    return svg(W, H, "".join(b), "Footer: F40 driving past a chequered flag")
 
 
 def main():
     os.makedirs(OUT, exist_ok=True)
-    fr = frames(60)
-    assert len(fr) == 60 and all(len(f) == ROWS for f in fr)
-    files = {"hero.svg": hero(fr), "telemetry.svg": telemetry(), "gearbox.svg": gearbox(), "footer.svg": footer(fr[0])}
+    fr = frames(48, fit=0.88)
+    assert len(fr) == 48 and all(len(f) == ROWS for f in fr)
+    files = {"hero.svg": hero(fr), "telemetry.svg": telemetry(), "gearbox.svg": gearbox(), "footer.svg": footer(render([0.0], cols=200, rows=60, pitch=0.14)[0])}
     for k, p in enumerate(PROJECTS):
         files[f"pit-{p[1]}.svg"] = card(*p, k)
     for name, data in files.items():

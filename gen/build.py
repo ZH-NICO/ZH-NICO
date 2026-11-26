@@ -4,7 +4,7 @@ import os
 
 import numpy as np
 
-from f40 import render_px, quantize, emblem_grid
+from f40 import render_px, quantize
 
 OUT = os.path.join(os.path.dirname(__file__), "..", "assets")
 FONT = "'JetBrains Mono','Fira Code','Cascadia Code',Consolas,'DejaVu Sans Mono','Courier New',monospace"
@@ -83,13 +83,6 @@ def car_px(thetas, W, H, colors, **kw):
     return quantize(render_px(thetas, W, H, **kw), colors)
 
 
-# ---------------------------------------------------------------- emblem (original design, not a brand logo)
-
-def emblem():
-    return emblem_grid(), [GOLD, "#111111", "#009246", "#f4f5f0", "#ce2b37"]
-
-
-# ---------------------------------------------------------------- hero
 
 def hero():
     W, H = 1000, 640
@@ -141,12 +134,10 @@ def hero():
     b.append(typed(300, 34, "$ ./ignite --model F40 --colour rosso-corsa", .2, 12, INK))
     b.append(f'<line x1="20" y1="48" x2="{W - 20}" y2="48" stroke="{RED}" stroke-opacity=".3" stroke-dasharray="2 4"/>')
 
-    eg, epal = emblem()
-    b.append(px_text(eg, epal, 36, 66, 4.2))
     b.append(f'<g font-size="60" font-weight="700" letter-spacing="6">'
-             f'<text x="116" y="122" class="gl" fill="{GOLD}" opacity="0">ZH-NICO</text>'
-             f'<text x="116" y="122" class="draw" filter="url(#glow)">ZH-NICO</text></g>')
-    b.append(typed(120, 148, "Software Developer · Application Development · Switzerland", 2.4, 13, HOT))
+             f'<text x="36" y="122" class="gl" fill="{GOLD}" opacity="0">ZH-NICO</text>'
+             f'<text x="36" y="122" class="draw" filter="url(#glow)">ZH-NICO</text></g>')
+    b.append(typed(40, 148, "Software Developer · Application Development · Switzerland", 2.4, 13, HOT))
 
     hx, hy = 690, 76
     spec = [("MODEL", "F40 · 1987"), ("ENGINE", "2.9 L V8 twin-turbo"), ("POWER", "478 PS @ 7000 rpm"),

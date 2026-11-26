@@ -4,7 +4,7 @@ import os
 
 import numpy as np
 
-from f40 import render_px, quantize
+from f40 import render_px, quantize, emblem_grid
 
 OUT = os.path.join(os.path.dirname(__file__), "..", "assets")
 FONT = "'JetBrains Mono','Fira Code','Cascadia Code',Consolas,'DejaVu Sans Mono','Courier New',monospace"
@@ -85,40 +85,17 @@ def car_px(thetas, W, H, colors, **kw):
 
 # ---------------------------------------------------------------- emblem (original design, not a brand logo)
 
-FONT3 = {"F": ["###", "#..", "##.", "#..", "#.."], "4": ["#.#", "#.#", "###", "..#", "..#"],
-         "0": ["###", "#.#", "#.#", "#.#", "###"], "Z": ["###", "..#", ".#.", "#..", "###"],
-         "H": ["#.#", "#.#", "###", "#.#", "#.#"]}
-
-
-def emblem_grid():
-    """15x20 yellow racing plate with black rim, tricolour bar, 'F40' and 'ZH' in a 3x5 pixel font."""
-    W, H = 15, 20
-    g = np.zeros((H, W), int)  # 0 yellow, 1 black, 2 green, 3 white, 4 red, -1 none
-    g[2, 1:5], g[2, 5:10], g[2, 10:14] = 2, 3, 4
-
-    def put(word, top):
-        x = (W - (4 * len(word) - 1)) // 2
-        for ch in word:
-            for yy, line in enumerate(FONT3[ch]):
-                for xx, v in enumerate(line):
-                    if v == "#":
-                        g[top + yy, x + xx] = 1
-            x += 4
-    put("F40", 5)
-    put("ZH", 12)
-    g[0, :] = 1; g[-1, :] = 1; g[:, 0] = 1; g[:, -1] = 1
-    for y, x in ((0, 0), (0, W - 1), (H - 1, 0), (H - 1, W - 1)):
-        g[y, x] = -1
-    return g, [GOLD, "#111111", "#009246", "#f4f5f0", "#ce2b37"]
+def emblem():
+    return emblem_grid(), [GOLD, "#111111", "#009246", "#f4f5f0", "#ce2b37"]
 
 
 # ---------------------------------------------------------------- hero
 
 def hero():
     W, H = 1000, 640
-    p, cw, ch = 3.8, 252, 98
+    p, cw, ch = 2.8, 340, 132
     x0, y0 = (W - cw * p) / 2, 196
-    (g,), pal = car_px([np.pi + 0.62], cw, ch, 40, pitch=0.16, dist=7.5, fit=0.93)
+    (g,), pal = car_px([np.pi + 0.62], cw, ch, 64, pitch=0.16, dist=7.5, fit=0.93)
     rows_used = np.nonzero((g >= 0).any(1))[0]
     floor = y0 + (rows_used[-1] + 1) * p
     css = BASE_CSS + f"""
@@ -156,6 +133,7 @@ def hero():
     # car, floor reflection, light sweep over the paint
     b.append(f'<g mask="url(#refl)" opacity=".28"><use href="#car" transform="translate(0 {2 * floor:.1f}) scale(1 -1)"/></g>')
     b.append(f'<line x1="40" y1="{floor:.1f}" x2="{W - 40}" y2="{floor:.1f}" stroke="{RED}" stroke-opacity=".25"/>')
+    b.append(f'<ellipse cx="{W / 2}" cy="{floor - 4:.0f}" rx="400" ry="20" fill="#000" opacity=".75" filter="url(#glow2)"/>')
     b.append('<use href="#car"/>')
     b.append(f'<rect width="{W}" height="{H}" fill="url(#shine)" mask="url(#carmask)"/>')
 
@@ -163,7 +141,7 @@ def hero():
     b.append(typed(300, 34, "$ ./ignite --model F40 --colour rosso-corsa", .2, 12, INK))
     b.append(f'<line x1="20" y1="48" x2="{W - 20}" y2="48" stroke="{RED}" stroke-opacity=".3" stroke-dasharray="2 4"/>')
 
-    eg, epal = emblem_grid()
+    eg, epal = emblem()
     b.append(px_text(eg, epal, 36, 66, 4.2))
     b.append(f'<g font-size="60" font-weight="700" letter-spacing="6">'
              f'<text x="116" y="122" class="gl" fill="{GOLD}" opacity="0">ZH-NICO</text>'

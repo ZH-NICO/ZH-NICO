@@ -31,6 +31,46 @@ ST = np.array([
 ])
 
 BODY, GLASS, TIRE, RIM, TRIM, TAIL, LAMP, SHADOW, LOUVRE = range(9)
+DECAL = 9  # DECAL + emblem colour index
+DECAL_RGB = [(1.0, 0.80, 0.0), (0.03, 0.03, 0.03), (0.0, 0.50, 0.24), (0.93, 0.93, 0.9), (0.78, 0.09, 0.14)]
+DECAL_HEX = ["#ffd200", "#111111", "#009246", "#f4f5f0", "#ce2b37"]
+
+FONT3 = {"F": ["###", "#..", "##.", "#..", "#.."], "4": ["#.#", "#.#", "###", "..#", "..#"],
+         "0": ["###", "#.#", "#.#", "#.#", "###"], "Z": ["###", "..#", ".#.", "#..", "###"],
+         "H": ["#.#", "#.#", "###", "#.#", "#.#"]}
+
+
+def emblem_grid():
+    """Own design (not a brand logo): 15x20 yellow plate, black rim, tricolour bar, 'F40' and 'ZH'."""
+    W, H = 15, 20
+    g = np.zeros((H, W), int)  # 0 yellow, 1 black, 2 green, 3 white, 4 red, -1 none
+    g[2, 1:5], g[2, 5:10], g[2, 10:14] = 2, 3, 4
+
+    def put(word, top):
+        x = (W - (4 * len(word) - 1)) // 2
+        for ch in word:
+            for yy, line in enumerate(FONT3[ch]):
+                for xx, v in enumerate(line):
+                    if v == "#":
+                        g[top + yy, x + xx] = 1
+            x += 4
+    put("F40", 5)
+    put("ZH", 12)
+    g[0, :] = 1; g[-1, :] = 1; g[:, 0] = 1; g[:, -1] = 1
+    for y, x in ((0, 0), (0, W - 1), (H - 1, 0), (H - 1, W - 1)):
+        g[y, x] = -1
+    return g
+
+
+def _smooth(a, k, axis):
+    """Box filter with edge padding (rounds creases between loft stations / profile segments)."""
+    pad = [(0, 0)] * a.ndim
+    pad[axis] = (k // 2, k // 2)
+    ap = np.pad(a, pad, mode="edge")
+    c = np.cumsum(ap, axis=axis)
+    c = np.concatenate([np.zeros_like(np.take(c, [0], axis=axis)), c], axis=axis)
+    n = a.shape[axis]
+    return (np.take(c, range(k, k + n), axis=axis) - np.take(c, range(0, n), axis=axis)) / k
 
 
 def station(d):
@@ -56,9 +96,9 @@ def build():
         P.append(p); N.append(n); M.append(m.astype(int))
 
     # ---- lofted shell, one side, then mirrored
-    d = np.arange(0, LEN + 1e-9, 0.009)
+    d = np.arange(0, LEN + 1e-9, 0.006)
     kp = station(d)
-    segs = [44, 30, 22, 52]
+    segs = [64, 44, 32, 76]
     pts, seg_id, seg_t = [], [], []
     for s, cnt in enumerate(segs):
         t = np.linspace(0, 1, cnt, endpoint=(s == 3))
@@ -68,6 +108,9 @@ def build():
     sid, st = np.concatenate(seg_id), np.concatenate(seg_t)
     X = (2.18 - d)[:, None] * np.ones(prof.shape[1])
     Y, Z = prof[..., 0], prof[..., 1]
+    for _ in range(2):  # smooth surface: rounded shoulders, no faceting between stations
+        Y, Z = _smooth(_smooth(Y, 15, 0), 7, 1), _smooth(_smooth(Z, 15, 0), 7, 1)
+    Y[:, 0] = 0
     G = np.stack([X, Y, Z], -1)
     nrm = np.cross(np.gradient(G, axis=1), np.gradient(G, axis=0))
     ref = np.stack([0 * X, Y, Z - 0.35], -1)
@@ -88,8 +131,18 @@ def build():
     mat[(S == 3) & (D > 2.0) & (D < 2.42) & (Z > 0.53) & (Z < 0.60) & (Z < 0.53 + (D - 2.0) * 0.25)] = TRIM  # door NACA
     mat[(S == 3) & (D > 2.82) & (D < 3.02) & (Z > 0.30) & (Z < 0.56)] = TRIM            # lower side intake
     keep = ~((S >= 2) & in_arch(X, Z))
+    em = emblem_grid()
+    d0, d1, z0, z1 = 1.385, 1.655, 0.25, 0.61  # emblem on the front wing, behind the wheel arch
+    on = (S == 3) & (D >= d0) & (D < d1) & (Z >= z0) & (Z < z1)
+    v = np.clip(((z1 - Z) / (z1 - z0) * em.shape[0]).astype(int), 0, em.shape[0] - 1)
     for side in (1, -1):
-        add([X[keep], side * Y[keep], Z[keep]], [nrm[..., 0][keep], side * nrm[..., 1][keep], nrm[..., 2][keep]], mat[keep])
+        m = mat.copy()
+        # read left-to-right from outside on both sides (front is on the left when looking at y>0)
+        uu = (D - d0) if side == 1 else (d1 - D)
+        u = np.clip((uu / (d1 - d0) * em.shape[1]).astype(int), 0, em.shape[1] - 1)
+        e = em[v, u]
+        m[on & (e >= 0)] = DECAL + e[on & (e >= 0)]
+        add([X[keep], side * Y[keep], Z[keep]], [nrm[..., 0][keep], side * nrm[..., 1][keep], nrm[..., 2][keep]], m[keep])
 
     # ---- nose and tail caps
     for dd, nx, tail in ((0.0, 1.0, False), (LEN, -1.0, True)):
@@ -211,6 +264,11 @@ def render_px(thetas, W, H, pitch=0.2, dist=9.0, fit=0.96, ss=2, bg=(0.03, 0.03,
         col[M == TAIL] = [1.0, 0.1, 0.06]
         lp = M == LAMP
         col[lp] = np.array([1.0, 0.93, 0.75]) * (0.55 + 0.35 * diff[lp, None]) + 0.3 * env[lp]
+        for i, rgb in enumerate(DECAL_RGB):
+            dm = M == DECAL + i
+            col[dm] = np.array(rgb) * (0.8 + 0.25 * diff[dm, None])
+        lit = (M != TAIL) & (M != LAMP) & (M < DECAL)
+        col[lit] *= (0.55 + 0.45 * np.clip((P[lit, 2] - 0.06) / 0.4, 0, 1))[:, None]  # ground occlusion
         col = np.clip(col, 0, 1)
         facing = n[:, 1] < 0.05
         sx = (p[:, 0] * f * k + ox).astype(int); sy = (-p[:, 2] * f * k + oy).astype(int)
@@ -243,20 +301,30 @@ def render_px(thetas, W, H, pitch=0.2, dist=9.0, fit=0.96, ss=2, bg=(0.03, 0.03,
     return out
 
 
-def quantize(images, colors=28):
-    """Shared palette across frames -> list of index grids (-1 = background) and the palette as hex."""
+def quantize(images, colors=28, fixed=DECAL_RGB, tol=0.2):
+    """Shared palette across frames -> index grids (-1 = background) and hex palette.
+
+    Pixels close to one of the `fixed` colours (the emblem) keep that exact colour so
+    the median cut cannot wash it out.
+    """
     from PIL import Image
+    fx = np.array([[min(1, c * 0.95) for c in rgb] for rgb in fixed])
     vis = np.concatenate([rgb[a > 0.25] for rgb, a in images])
-    sample = Image.fromarray((vis[None, :, :] * 255).astype(np.uint8))
+    near = np.min(np.linalg.norm(vis[:, None, :] - fx[None], axis=2), 1) < tol
+    sample = Image.fromarray((vis[~near][None] * 255).astype(np.uint8))
     pal_img = sample.quantize(colors=colors, method=Image.Quantize.MEDIANCUT)
     pal = np.array(pal_img.getpalette()[:colors * 3]).reshape(-1, 3)
     grids = []
     for rgb, a in images:
-        im = Image.fromarray((rgb * 255).astype(np.uint8)).quantize(palette=pal_img, dither=Image.Dither.NONE)
-        g = np.array(im).astype(int)
+        g = np.array(Image.fromarray((rgb * 255).astype(np.uint8)).quantize(palette=pal_img, dither=Image.Dither.NONE)).astype(int)
+        dist = np.linalg.norm(rgb[..., None, :] - fx, axis=-1)
+        k = dist.argmin(-1)
+        hit = dist.min(-1) < tol
+        g[hit] = colors + k[hit]
         g[a <= 0.25] = -1
         grids.append(g)
-    return grids, ["#%02x%02x%02x" % tuple(c) for c in pal]
+    hexes = ["#%02x%02x%02x" % tuple(c) for c in pal] + ["#%02x%02x%02x" % tuple(int(v * 255) for v in c) for c in fx]
+    return grids, hexes
 
 
 if __name__ == "__main__":

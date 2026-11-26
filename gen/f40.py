@@ -31,35 +31,23 @@ ST = np.array([
 ])
 
 BODY, GLASS, TIRE, RIM, TRIM, TAIL, LAMP, SHADOW, LOUVRE = range(9)
-DECAL = 9  # DECAL + emblem colour index
+DECAL = 9  # DECAL + badge colour index
 DECAL_RGB = [(1.0, 0.80, 0.0), (0.03, 0.03, 0.03), (0.0, 0.50, 0.24), (0.93, 0.93, 0.9), (0.78, 0.09, 0.14)]
 DECAL_HEX = ["#ffd200", "#111111", "#009246", "#f4f5f0", "#ce2b37"]
 
-FONT3 = {"F": ["###", "#..", "##.", "#..", "#.."], "4": ["#.#", "#.#", "###", "..#", "..#"],
-         "0": ["###", "#.#", "#.#", "#.#", "###"], "Z": ["###", "..#", ".#.", "#..", "###"],
-         "H": ["#.#", "#.#", "###", "#.#", "#.#"]}
-
-
-def emblem_grid():
-    """Own design (not a brand logo): 15x20 yellow plate, black rim, tricolour bar, 'F40' and 'ZH'."""
-    W, H = 15, 20
-    g = np.zeros((H, W), int)  # 0 yellow, 1 black, 2 green, 3 white, 4 red, -1 none
-    g[2, 1:5], g[2, 5:10], g[2, 10:14] = 2, 3, 4
-
-    def put(word, top):
-        x = (W - (4 * len(word) - 1)) // 2
-        for ch in word:
-            for yy, line in enumerate(FONT3[ch]):
-                for xx, v in enumerate(line):
-                    if v == "#":
-                        g[top + yy, x + xx] = 1
-            x += 4
-    put("F40", 5)
-    put("ZH", 12)
-    g[0, :] = 1; g[-1, :] = 1; g[:, 0] = 1; g[:, -1] = 1
-    for y, x in ((0, 0), (0, W - 1), (H - 1, 0), (H - 1, W - 1)):
-        g[y, x] = -1
-    return g
+def shield_grid():
+    """7x9 plain yellow shield with a tricolour top band, sized and placed like the real wing badges."""
+    rows = ["GGWWWRR",
+            "YYYYYYY",
+            "YYYYYYY",
+            "YYYYYYY",
+            "YYYYYYY",
+            "YYYYYYY",
+            ".YYYYY.",
+            "..YYY..",
+            "...Y..."]
+    code = {"Y": 0, "G": 2, "W": 3, "R": 4, ".": -1}
+    return np.array([[code[c] for c in r] for r in rows])
 
 
 def _smooth(a, k, axis):
@@ -124,15 +112,26 @@ def build():
     mat[(S == 1) & (D > 1.55) & (D < 2.62) & (T > 0.08) & (T < 0.92)] = GLASS          # side windows
     mat[(S == 0) & (D > 2.78) & (D < 3.95)] = LOUVRE                                    # slatted engine cover
     mat[(S <= 1) & (D > 2.66) & (D < 2.78)] = GLASS                                     # small rear window
-    mat[(S == 0) & (D > 0.55) & (D < 0.9) & (np.abs(Y) > 0.16) & (np.abs(Y) < 0.30 - (D - 0.55) * 0.12)] = TRIM  # bonnet NACA ducts
-    mat[(S == 0) & (D > 1.12) & (D < 1.38) & (np.abs(Y) < 0.30)] = TRIM                 # bonnet exit vent
-    mat[(S <= 2) & (D > 0.04) & (D < 0.30) & (np.abs(Y) > 0.48) & (np.abs(Y) < 0.78)] = LAMP  # front lamps
+    ay = np.abs(Y)
+    naca = (S == 0) & (D > 0.80) & (D < 1.10) & (np.abs(ay - 0.2) < 0.015 + (D - 0.80) * 0.16)
+    mat[naca] = TRIM                                                                    # two bonnet NACA ducts
+    mat[(S <= 2) & (D > 0.06) & (D < 0.32) & (ay > 0.50) & (ay < 0.80)] = LAMP          # smoked headlamp glass
+    lid_out = (D > 0.35) & (D < 0.67) & (ay > 0.46) & (ay < 0.81)
+    lid_in = (D > 0.362) & (D < 0.658) & (ay > 0.472) & (ay < 0.798)
+    mat[(S <= 2) & lid_out & ~lid_in] = TRIM                                            # pop-up lamp lid shut line
     mat[(S == 2) & (D > 2.66) & (D < 3.02) & (T > 0.2)] = TRIM                          # rear-quarter intake
     mat[(S == 3) & (D > 2.0) & (D < 2.42) & (Z > 0.53) & (Z < 0.60) & (Z < 0.53 + (D - 2.0) * 0.25)] = TRIM  # door NACA
     mat[(S == 3) & (D > 2.82) & (D < 3.02) & (Z > 0.30) & (Z < 0.56)] = TRIM            # lower side intake
+    win = (S == 1) & (D > 1.55) & (D < 2.62) & (T > 0.06) & (T < 0.94)
+    mat[win] = TRIM                                                                     # black window surround
+    mat[(S == 1) & (D > 1.59) & (D < 2.58) & (T > 0.11) & (T < 0.9)] = GLASS            # side window
+    shut = (S >= 2) & (mat == BODY) & (Z > 0.18) & ((np.abs(D - 1.66) < 0.006) | (np.abs(D - 2.59) < 0.006))
+    mat[shut] = TRIM                                                                    # door shut lines
+    mat[(S == 3) & (mat == BODY) & (np.abs(Z - 0.43) < 0.006) & (D > 1.36) & (D < 3.05)] = TRIM  # side crease
+    mat[(S == 0) & (D > 0.025) & (D < 0.075) & (ay < 0.035)] = DECAL                    # small yellow nose badge
     keep = ~((S >= 2) & in_arch(X, Z))
-    em = emblem_grid()
-    d0, d1, z0, z1 = 1.385, 1.655, 0.25, 0.61  # emblem on the front wing, behind the wheel arch
+    em = shield_grid()
+    d0, d1, z0, z1 = 1.43, 1.52, 0.50, 0.625  # wing badge, just behind the front wheel arch
     on = (S == 3) & (D >= d0) & (D < d1) & (Z >= z0) & (Z < z1)
     v = np.clip(((z1 - Z) / (z1 - z0) * em.shape[0]).astype(int), 0, em.shape[0] - 1)
     for side in (1, -1):
@@ -176,10 +175,10 @@ def build():
         for yv, sgn in ((0.93, 1), (0.87, -1)):
             z0 = 0 * xf[ok]
             add([xf[ok], side * yv + z0, zf[ok]], [z0, side * sgn + z0, z0], BODY)
-        xm, zm = np.meshgrid(np.arange(0.40, 0.56, 0.008), np.arange(0.80, 0.90, 0.008))
-        add([xm, side * 1.06 + 0 * xm, zm], [0.3 + 0 * xm, side + 0 * xm, 0.2 + 0 * xm], BODY)
-        xm, ym = np.meshgrid(np.arange(0.40, 0.56, 0.008), np.arange(0.97, 1.06, 0.008))
-        add([xm, side * ym, 0.90 + 0 * xm], [0 * xm, 0 * xm, 1 + 0 * xm], BODY)
+        xm, zm = np.meshgrid(np.arange(0.44, 0.54, 0.006), np.arange(0.84, 0.91, 0.006))
+        add([xm, side * 1.04 + 0 * xm, zm], [0.3 + 0 * xm, side + 0 * xm, 0.2 + 0 * xm], BODY)
+        xm, ym = np.meshgrid(np.arange(0.44, 0.54, 0.006), np.arange(0.97, 1.04, 0.006))
+        add([xm, side * ym, 0.91 + 0 * xm], [0 * xm, 0 * xm, 1 + 0 * xm], BODY)
 
     # ---- wheels: tread, sidewall, 5-spoke star rim, dark wheel wells
     for wx, r, yin, yout in WHEELS:
@@ -249,25 +248,30 @@ def render_px(thetas, W, H, pitch=0.2, dist=9.0, fit=0.96, ss=2, bg=(0.03, 0.03,
         spec = np.clip((2 * (n @ key)[:, None] * n - key) @ v, 0, 1)
         fres = 0.06 + 0.94 * (1 - ndv) ** 5
         col = np.zeros((len(P), 3))
-        paint = np.array([0.78, 0.035, 0.015])
+        paint = np.array([0.86, 0.07, 0.025])
         body = (M == BODY) | ((M == LOUVRE) & (np.sin(P[:, 0] * 52) > 0.2))
         col[body] = (paint * (0.16 + 0.95 * diff[body, None] + 0.25 * dfill[body, None])
                      + env[body] * (0.10 + 0.6 * fres[body, None]) + 1.2 * spec[body, None] ** 40)
         g = M == GLASS
-        col[g] = 0.02 + env[g] * (0.28 + 0.6 * fres[g, None]) + 1.5 * spec[g, None] ** 60
+        seat = np.clip((1.06 - P[g, 2]) / 0.2, 0, 1)[:, None]  # red interior showing through the lower glass
+        col[g] = (np.array([0.05, 0.06, 0.07]) + seat * (1 - fres[g, None]) * np.array([0.55, 0.05, 0.03])
+                  + env[g] * (0.22 + 0.6 * fres[g, None]) + 1.5 * spec[g, None] ** 60)
         t = M == TIRE
         col[t] = 0.05 + 0.07 * diff[t, None] + 0.04 * env[t]
         rm = M == RIM
-        col[rm] = np.array([0.7, 0.7, 0.74]) * (0.45 + 0.6 * env[rm] + 0.5 * diff[rm, None]) + spec[rm, None] ** 20
+        col[rm] = np.array([0.93, 0.93, 0.95]) * (0.62 + 0.35 * env[rm] + 0.35 * diff[rm, None]) + spec[rm, None] ** 20
         tr = (M == TRIM) | ((M == LOUVRE) & ~body)
         col[tr] = 0.025 + 0.05 * diff[tr, None] + 0.05 * env[tr]
         col[M == TAIL] = [1.0, 0.1, 0.06]
         lp = M == LAMP
-        col[lp] = np.array([1.0, 0.93, 0.75]) * (0.55 + 0.35 * diff[lp, None]) + 0.3 * env[lp]
+        dl, yl = 2.18 - P[lp, 0], np.abs(P[lp, 1])
+        reflector = ((dl > 0.11) & (dl < 0.27) & (yl > 0.55) & (yl < 0.75)).astype(float)[:, None]
+        col[lp] = (np.array([0.08, 0.10, 0.12]) + env[lp] * (0.35 + 0.5 * fres[lp, None]) + 1.5 * spec[lp, None] ** 50
+                   + reflector * np.array([0.45, 0.48, 0.5]))
         for i, rgb in enumerate(DECAL_RGB):
             dm = M == DECAL + i
             col[dm] = np.array(rgb) * (0.8 + 0.25 * diff[dm, None])
-        lit = (M != TAIL) & (M != LAMP) & (M < DECAL)
+        lit = (M != TAIL) & (M != LAMP) & (M != RIM) & (M < DECAL)
         col[lit] *= (0.55 + 0.45 * np.clip((P[lit, 2] - 0.06) / 0.4, 0, 1))[:, None]  # ground occlusion
         col = np.clip(col, 0, 1)
         facing = n[:, 1] < 0.05

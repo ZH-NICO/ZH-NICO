@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="assets/hero.svg" width="100%" alt="ZH-NICO: a rotating 3D ASCII render of a Ferrari F40 with a spec sheet">
+  <img src="assets/hero.svg" width="100%" alt="ZH-NICO: a Ferrari F40 rendered pixel by pixel in monospace text, with a spec sheet">
+</p>
+
+<p align="center">
+  <img src="assets/turntable.svg" width="100%" alt="360 degree turntable of the F40">
 </p>
 
 <p align="center">

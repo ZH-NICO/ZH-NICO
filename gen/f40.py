@@ -14,8 +14,8 @@ WHEELS = [(FX, 0.314, 0.66, 0.905), (RX, 0.333, 0.60, 0.955)]  # x, radius, inne
 # station: d from nose, centre-top z, crown edge (y,z), shoulder (y,z), max width (y,z), rocker (y,z)
 ST = np.array([
     # d     zc    yc    zce   ys    zs    yw     zw    yr    zr
-    [0.00, 0.40, 0.40, 0.39, 0.66, 0.40, 0.80, 0.33, 0.78, 0.13],
-    [0.12, 0.50, 0.40, 0.49, 0.70, 0.52, 0.90, 0.44, 0.88, 0.12],
+    [0.00, 0.35, 0.40, 0.35, 0.66, 0.36, 0.80, 0.30, 0.78, 0.13],
+    [0.12, 0.45, 0.40, 0.45, 0.70, 0.48, 0.90, 0.41, 0.88, 0.12],
     [0.50, 0.59, 0.36, 0.58, 0.72, 0.67, 0.95, 0.55, 0.93, 0.12],
     [0.98, 0.65, 0.34, 0.64, 0.73, 0.77, 0.965, 0.62, 0.95, 0.13],
     [1.40, 0.75, 0.40, 0.74, 0.76, 0.76, 0.965, 0.64, 0.95, 0.14],
@@ -107,8 +107,8 @@ def build():
             for cy in (-0.12, 0.0, 0.12):
                 m[(yy - cy) ** 2 + (zz - 0.44) ** 2 < 0.045 ** 2] = RIM                # triple exhaust
         else:
-            m[(ay < 0.5) & (zz > 0.17) & (zz < 0.30)] = TRIM                         # front intake slot
-            m[(ay > 0.58) & (ay < 0.74) & (zz > 0.17) & (zz < 0.27)] = TRIM          # brake ducts
+            m[(ay < 0.62) & (zz > 0.155) & (zz < 0.27)] = TRIM                       # wide front intake
+            m[(ay > 0.66) & (ay < 0.76) & (zz > 0.17) & (zz < 0.25)] = TRIM          # brake ducts
         z0 = 0 * yy[ok]
         add([2.18 - dd + z0, yy[ok], zz[ok]], [nx + z0, z0, (0.6 if not tail else 0.05) + z0], m[ok])
 
@@ -154,94 +154,113 @@ def build():
     return np.concatenate(P), np.concatenate(N), np.concatenate(M)
 
 
-EDGE = {0: "-", 1: "\\", 2: "|", 3: "/"}
-RAMP = "░░▒▒▓▓███"
+def _env(r_up):
+    """Studio environment seen in reflections: bright softbox above, dark horizon, warm floor."""
+    sky = np.array([0.95, 0.96, 1.0]); hor = np.array([0.10, 0.10, 0.13]); floor = np.array([0.10, 0.02, 0.01])
+    t = np.clip(r_up, -1, 1)[:, None]
+    up = hor + (sky - hor) * np.clip(t * 1.6, 0, 1) ** 1.5
+    return np.where(t > 0, up, hor + (floor - hor) * np.clip(-t * 3, 0, 1))
 
 
-def classify(mat, lum, spec, refl_up, x_world):
-    cls = np.full(len(mat), "K", dtype=object)
-    body = mat == BODY
-    cls[body] = np.array(["B0", "B1", "B2", "B3"])[np.digitize(lum, [0.3, 0.55, 0.84])[body]]
-    cls[body & (spec > 0.6)] = "B4"
-    g = mat == GLASS
-    cls[g] = np.where(refl_up[g] > 0.55, "G2", np.where(refl_up[g] > 0.15, "G1", "G0"))
-    lv = mat == LOUVRE
-    cls[lv] = np.where(np.sin(x_world[lv] * 52) > 0.35, "B1", "K")
-    cls[mat == TIRE] = "T"
-    cls[mat == RIM] = np.where(lum[mat == RIM] > 0.33, "R1", "R0")
-    cls[mat == TAIL] = "L"
-    cls[mat == LAMP] = "F"
-    cls[mat == SHADOW] = "S"
-    return cls
-
-
-def render(thetas, cols=COLS, rows=ROWS, pitch=0.27, aspect=0.6, fit=0.94):
+def render_px(thetas, W, H, pitch=0.2, dist=9.0, fit=0.96, ss=2, bg=(0.03, 0.03, 0.04)):
+    """Shaded RGB images (H, W, 3) in 0..1 for each yaw angle; one shared scale so frames never jump."""
     P, N, M = build()
-    light = np.array([-0.45, -0.55, 0.7]); light /= np.linalg.norm(light)
+    keep = M != SHADOW
+    P, N, M = P[keep], N[keep], M[keep]
+    key = np.array([-0.5, -0.6, 0.62]); key /= np.linalg.norm(key)
+    fill = np.array([0.7, -0.4, 0.2]); fill /= np.linalg.norm(fill)
     cp, sp = np.cos(pitch), np.sin(pitch)
     Tm = np.array([[1, 0, 0], [0, cp, -sp], [0, sp, cp]])
-    view = np.array([0, -1.0, 0])  # towards the camera (camera on -y)
     up = Tm @ [0, 0, 1]
-    proj = []
+    v = np.array([0, -1.0, 0])
+    views = []
     for th in thetas:
         c, s = np.cos(th), np.sin(th)
         Mx = Tm @ np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
         p = (P - [0, 0, 0.5]) @ Mx.T
         n = N @ Mx.T
-        ndl = n @ light
-        spec = np.clip((2 * ndl[:, None] * n - light) @ view, 0, 1) ** 24
-        refl_up = (2 * (n @ view)[:, None] * n - view) @ up
-        lum = np.clip(0.24 + 0.74 * np.clip(ndl, 0, 1) + 0.35 * spec, 0, 1)
-        facing = (n[:, 1] < 0.05) | (M == SHADOW)
-        f = 1 / (11.0 + p[:, 1])
-        proj.append((p[:, 0] * f, -p[:, 2] * f * aspect, f, lum, spec, refl_up, facing, p[:, 1]))
-    # one scale and centre for all frames so the car never jumps
-    xs = np.concatenate([q[0][q[6]] for q in proj]); ys = np.concatenate([q[1][q[6]] for q in proj])
-    k = fit * min((cols - 2) / (xs.max() - xs.min()), (rows - 1) / (ys.max() - ys.min()))
-    ox, oy = cols / 2 - k * (xs.min() + xs.max()) / 2, rows / 2 - k * (ys.min() + ys.max()) / 2
-    ramp = np.array(list(RAMP))
+        f = 1 / (dist + p[:, 1])
+        views.append((p, n, f))
+    xs = np.concatenate([p[:, 0] * f for p, n, f in views]); ys = np.concatenate([-p[:, 2] * f for p, n, f in views])
+    Ws, Hs = W * ss, H * ss
+    k = fit * min((Ws - 2) / (xs.max() - xs.min()), (Hs - 2) / (ys.max() - ys.min()))
+    ox, oy = Ws / 2 - k * (xs.max() + xs.min()) / 2, Hs / 2 - k * (ys.max() + ys.min()) / 2
     out = []
-    for qx, qy, f, lum, spec, refl_up, facing, depth in proj:
-        sx, sy = (qx * k + ox).astype(int), (qy * k + oy).astype(int)
-        ok = np.nonzero(facing & (sx >= 0) & (sx < cols) & (sy >= 0) & (sy < rows))[0]
-        idx = ok[np.lexsort((f[ok], M[ok] != SHADOW))]  # shadow first, then far -> near
-        yy, xx = sy[idx], sx[idx]
-        gc = np.full((rows, cols), "", dtype=object)
-        gch = np.full((rows, cols), " ", dtype=object)
-        gd = np.full((rows, cols), 50.0)
-        gm = np.full((rows, cols), -1)
-        gc[yy, xx] = classify(M[idx], lum[idx], spec[idx], refl_up[idx], P[idx, 0])
-        gch[yy, xx] = ramp[np.clip((lum[idx] * len(RAMP)).astype(int), 0, len(RAMP) - 1)]
-        gd[yy, xx] = np.where(M[idx] == SHADOW, 50.0, depth[idx])
-        gm[yy, xx] = M[idx]
-        shadow = gm == SHADOW
-        gch[shadow] = "░"
-        car = (gm >= 0) & ~shadow
-        # outlines: pixels whose neighbour is much farther (silhouette or depth step)
-        pad = np.pad(gd, 1, mode="edge")
-        nb = lambda dy, dx: pad[1 + dy:1 + dy + rows, 1 + dx:1 + dx + cols]
-        edge = np.zeros_like(car)
-        for (ay, ax), (by, bx) in (((0, 1), (0, -1)), ((1, 0), (-1, 0))):
-            a, c2 = nb(ay, ax), nb(by, bx)
-            # a real step, not just a sloped surface: one side jumps away much more than the other
-            edge |= (np.maximum(a, c2) - gd > 0.22) & (a + c2 - 2 * gd > 0.2)
-        edge &= car
-        hy, hx = np.gradient(np.pad(gd, 1, mode="edge"))
-        hy, hx = hy[1:-1, 1:-1] / aspect, hx[1:-1, 1:-1]
-        ang = (np.degrees(np.arctan2(hy, hx)) + 90) % 180  # edge runs perpendicular to depth gradient
-        bucket = ((ang + 22.5) // 45).astype(int) % 4
-        for b, ch in EDGE.items():
-            gch[edge & (bucket == b)] = ch
-        gc[edge & np.isin(gc, ["B0", "B1", "B2"])] = "B3"
-        out.append([list(zip(gch[r], gc[r])) for r in range(rows)])
+    for p, n, f in views:
+        ndv = np.clip(-(n[:, 1]), 0, 1)
+        diff = np.clip(n @ key, 0, 1)
+        dfill = np.clip(n @ fill, 0, 1)
+        r = 2 * (n @ v)[:, None] * n - v
+        r_up = r @ up
+        env = _env(r_up)
+        spec = np.clip((2 * (n @ key)[:, None] * n - key) @ v, 0, 1)
+        fres = 0.06 + 0.94 * (1 - ndv) ** 5
+        col = np.zeros((len(P), 3))
+        paint = np.array([0.78, 0.035, 0.015])
+        body = (M == BODY) | ((M == LOUVRE) & (np.sin(P[:, 0] * 52) > 0.2))
+        col[body] = (paint * (0.16 + 0.95 * diff[body, None] + 0.25 * dfill[body, None])
+                     + env[body] * (0.10 + 0.6 * fres[body, None]) + 1.2 * spec[body, None] ** 40)
+        g = M == GLASS
+        col[g] = 0.02 + env[g] * (0.28 + 0.6 * fres[g, None]) + 1.5 * spec[g, None] ** 60
+        t = M == TIRE
+        col[t] = 0.05 + 0.07 * diff[t, None] + 0.04 * env[t]
+        rm = M == RIM
+        col[rm] = np.array([0.7, 0.7, 0.74]) * (0.45 + 0.6 * env[rm] + 0.5 * diff[rm, None]) + spec[rm, None] ** 20
+        tr = (M == TRIM) | ((M == LOUVRE) & ~body)
+        col[tr] = 0.025 + 0.05 * diff[tr, None] + 0.05 * env[tr]
+        col[M == TAIL] = [1.0, 0.1, 0.06]
+        lp = M == LAMP
+        col[lp] = np.array([1.0, 0.93, 0.75]) * (0.55 + 0.35 * diff[lp, None]) + 0.3 * env[lp]
+        col = np.clip(col, 0, 1)
+        facing = n[:, 1] < 0.05
+        sx = (p[:, 0] * f * k + ox).astype(int); sy = (-p[:, 2] * f * k + oy).astype(int)
+        ok = np.nonzero(facing & (sx >= 0) & (sx < Ws - 1) & (sy >= 0) & (sy < Hs - 1))[0]
+        ok = ok[np.argsort(f[ok])]  # far -> near, nearest written last wins
+        img = np.zeros((Hs, Ws, 3)); dep = np.full((Hs, Ws), 99.0)
+        for dy in (0, 1):  # 2x2 splat closes sampling holes
+            for dx in (0, 1):
+                yy, xx = sy[ok] + dy, sx[ok] + dx
+                zz = p[ok, 1]
+                # nearer splat may not be overwritten by a farther neighbour: write per pass, keep min depth
+                closer = zz < dep[yy, xx] + 0.02
+                img[yy[closer], xx[closer]] = col[ok][closer]
+                dep[yy[closer], xx[closer]] = np.minimum(dep[yy[closer], xx[closer]], zz[closer])
+        cover = dep < 50
+        # crisp contour: darken real depth steps (second difference), not sloped surfaces
+        pad = np.pad(np.where(cover, dep, 60.0), 1, mode="edge")
+        nb = lambda a, b: pad[1 + a:1 + a + Hs, 1 + b:1 + b + Ws]
+        edge = np.zeros_like(cover)
+        for (a1, b1), (a2, b2) in (((0, 1), (0, -1)), ((1, 0), (-1, 0))):
+            A, B = nb(a1, b1), nb(a2, b2)
+            edge |= (np.maximum(A, B) - dep > 0.12) & (A + B - 2 * dep > 0.1)
+        img[edge & cover] *= 0.35
+        # downsample ss x ss with coverage -> anti-aliased edges against the background
+        img = img.reshape(H, ss, W, ss, 3).mean((1, 3))
+        a = cover.reshape(H, ss, W, ss).mean((1, 3))
+        rgb = np.where(a[..., None] > 0, img / np.maximum(a[..., None], 1e-6), 0)
+        rgb = rgb * a[..., None] + np.array(bg) * (1 - a[..., None])
+        out.append((np.clip(rgb, 0, 1), a))
     return out
 
 
-def frames(n=48, **kw):
-    return render([2 * np.pi * i / n + np.pi + 0.6 for i in range(n)], **kw)
+def quantize(images, colors=28):
+    """Shared palette across frames -> list of index grids (-1 = background) and the palette as hex."""
+    from PIL import Image
+    vis = np.concatenate([rgb[a > 0.25] for rgb, a in images])
+    sample = Image.fromarray((vis[None, :, :] * 255).astype(np.uint8))
+    pal_img = sample.quantize(colors=colors, method=Image.Quantize.MEDIANCUT)
+    pal = np.array(pal_img.getpalette()[:colors * 3]).reshape(-1, 3)
+    grids = []
+    for rgb, a in images:
+        im = Image.fromarray((rgb * 255).astype(np.uint8)).quantize(palette=pal_img, dither=Image.Dither.NONE)
+        g = np.array(im).astype(int)
+        g[a <= 0.25] = -1
+        grids.append(g)
+    return grids, ["#%02x%02x%02x" % tuple(c) for c in pal]
 
 
 if __name__ == "__main__":
-    import sys
-    for fr in render([0.6, 0.0, np.pi / 2, np.pi + 0.6]):
-        sys.stdout.write("\n".join("|" + "".join(ch if c and c != "S" else " " for ch, c in row) + "|" for row in fr) + "\n" + "=" * 162 + "\n")
+    from PIL import Image
+    imgs = render_px([np.pi + 0.65, 0.0, np.pi / 2, 0.65], 260, 110)
+    Image.fromarray((np.vstack([i for i, _ in imgs]) * 255).astype(np.uint8)).resize((780, 1320), Image.NEAREST).save(
+        r"C:/Users/nicos/AppData/Local/Temp/claude/1344df2ecd16dca1/ca94d143-088c-4fca-b8c5-ae0c813ef31b/scratchpad/px.png")

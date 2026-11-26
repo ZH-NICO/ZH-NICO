@@ -2,7 +2,9 @@
 import math
 import os
 
-from f40 import frames, render, ROWS
+import numpy as np
+
+from f40 import render_px, quantize
 
 OUT = os.path.join(os.path.dirname(__file__), "..", "assets")
 FONT = "'JetBrains Mono','Fira Code','Cascadia Code',Consolas,'DejaVu Sans Mono','Courier New',monospace"
@@ -58,110 +60,162 @@ def typed(x, y, s, begin, size=13, fill=INK, cps=28, pitch=None):
             f'calcMode="discrete" values="{";".join(f"{i * pitch:.1f}" for i in range(len(s) + 2))}" fill="freeze"/></rect></clipPath>'
             f'<g clip-path="url(#{cid})">{text(x, y, s, size, fill, pitch=pitch)}</g>')
 
-CLS = {"B0": "#7a1300", "B1": "#b01800", "B2": "#ff2800", "B3": "#ff7a55", "B4": "#ffe2d6",
-       "G0": "#1b2530", "G1": "#41566b", "G2": "#a8c2d8", "T": "#4b4b55", "R0": "#9c9ca8", "R1": "#ececf2",
-       "K": "#3a3a43", "L": "#ff2a2a", "F": "#fff0b8", "S": "#240700"}
+def px_text(grid, pal, x0, y0, p, gap=16):
+    """Pixel image as monospace text: every '█' is one square pixel of size p.
 
-
-def ascii_layers(rows, x0, y0, px, py, skip=("S",)):
-    """One <g fill> per colour class; each row becomes one <text> pinned to the column grid."""
+    Coordinates are in pixel units inside a scaled group (keeps the file small). Rows are
+    emitted top to bottom so each glyph's overhang is covered by the next row, which keeps
+    the grid exact whatever the font's block height is.
+    """
     out = []
-    for cls, col in CLS.items():
-        if cls in skip:
-            continue
-        g = []
-        for r, row in enumerate(rows):
-            s = "".join(ch if c == cls else " " for ch, c in row).rstrip()
-            if s:
-                lead = len(s) - len(s.lstrip())
-                s = s.lstrip()
-                g.append(f'<text x="{x0 + lead * px:.1f}" y="{y0 + r * py:.1f}" xml:space="preserve" textLength="{len(s) * px:.1f}" lengthAdjust="spacingAndGlyphs">{esc(s)}</text>')
-        if g:
-            out.append(f'<g fill="{col}">' + "".join(g) + "</g>")
-    return "".join(out)
+    for r, row in enumerate(grid):
+        for c in np.unique(row[row >= 0]):
+            xs = np.nonzero(row == c)[0]
+            for seg in np.split(xs, np.nonzero(np.diff(xs) > gap)[0] + 1):
+                a, z = seg[0], seg[-1]
+                s = "".join("█" if row[i] == c else " " for i in range(a, z + 1))
+                sp = ' xml:space="preserve"' if " " in s else ""
+                out.append(f'<text x="{a}" y="{r + 1}" fill="{pal[c]}"{sp} textLength="{z - a + 1}">{s}</text>')
+    return f'<g transform="translate({x0:.1f} {y0:.1f}) scale({p})" font-size="1.9">' + "".join(out) + "</g>"
+
+
+def car_px(thetas, W, H, colors, **kw):
+    return quantize(render_px(thetas, W, H, **kw), colors)
+
+
+# ---------------------------------------------------------------- emblem (original design, not a brand logo)
+
+FONT3 = {"F": ["###", "#..", "##.", "#..", "#.."], "4": ["#.#", "#.#", "###", "..#", "..#"],
+         "0": ["###", "#.#", "#.#", "#.#", "###"], "Z": ["###", "..#", ".#.", "#..", "###"],
+         "H": ["#.#", "#.#", "###", "#.#", "#.#"]}
+
+
+def emblem_grid():
+    """15x20 yellow racing plate with black rim, tricolour bar, 'F40' and 'ZH' in a 3x5 pixel font."""
+    W, H = 15, 20
+    g = np.zeros((H, W), int)  # 0 yellow, 1 black, 2 green, 3 white, 4 red, -1 none
+    g[2, 1:5], g[2, 5:10], g[2, 10:14] = 2, 3, 4
+
+    def put(word, top):
+        x = (W - (4 * len(word) - 1)) // 2
+        for ch in word:
+            for yy, line in enumerate(FONT3[ch]):
+                for xx, v in enumerate(line):
+                    if v == "#":
+                        g[top + yy, x + xx] = 1
+            x += 4
+    put("F40", 5)
+    put("ZH", 12)
+    g[0, :] = 1; g[-1, :] = 1; g[:, 0] = 1; g[:, -1] = 1
+    for y, x in ((0, 0), (0, W - 1), (H - 1, 0), (H - 1, W - 1)):
+        g[y, x] = -1
+    return g, [GOLD, "#111111", "#009246", "#f4f5f0", "#ce2b37"]
 
 
 # ---------------------------------------------------------------- hero
 
-def hero(fr):
-    W, H = 1000, 560
-    n, period = len(fr), 7.2
-    cx0, cy0, px, py = 16, 136, 4.4, 7.33  # car grid origin, column pitch, row pitch
-    slot = 100 / n
+def hero():
+    W, H = 1000, 640
+    p, cw, ch = 3.8, 252, 98
+    x0, y0 = (W - cw * p) / 2, 196
+    (g,), pal = car_px([np.pi + 0.62], cw, ch, 40, pitch=0.16, dist=7.5, fit=0.93)
+    rows_used = np.nonzero((g >= 0).any(1))[0]
+    floor = y0 + (rows_used[-1] + 1) * p
     css = BASE_CSS + f"""
-.fr{{visibility:hidden;animation:spin {period}s infinite}}
-@keyframes spin{{0%{{visibility:visible}}{slot:.4f}%{{visibility:hidden}}100%{{visibility:hidden}}}}
-.draw{{fill:transparent;stroke:{RED};stroke-width:1.2;stroke-dasharray:420;stroke-dashoffset:420;animation:draw 2.6s .2s ease-out forwards}}
-@keyframes draw{{70%{{stroke-dashoffset:0;fill:transparent}}100%{{stroke-dashoffset:0;fill:{INK}}}}}
+.draw{{fill:{INK};stroke:{RED};stroke-width:1.2;stroke-dasharray:420;stroke-dashoffset:0;animation:draw 2.6s .2s ease-out both}}
+@keyframes draw{{0%{{stroke-dashoffset:420;fill:transparent}}70%{{stroke-dashoffset:0;fill:transparent}}100%{{stroke-dashoffset:0;fill:{INK}}}}}
 .gl{{animation:gl 4.3s infinite steps(1)}}
 @keyframes gl{{0%,100%{{transform:translate(0,0);opacity:0}}61%{{transform:translate(-4px,0);opacity:.9}}62%{{transform:translate(5px,1px);opacity:.9}}63%{{opacity:0}}88%{{transform:translate(3px,-1px);opacity:.8}}89%{{opacity:0}}}}
 .lines text{{animation:zoom 1.1s linear infinite}}
 @keyframes zoom{{from{{transform:translateX(0)}}to{{transform:translateX(-240px)}}}}
+.beam{{animation:beam 6s ease-in-out infinite alternate}}@keyframes beam{{from{{transform:translateX(-120px)}}to{{transform:translateX(120px)}}}}
 """
     b = [f"<style>{css}</style>", common_defs(),
-         f'''<defs><linearGradient id="paint" gradientUnits="userSpaceOnUse" x1="0" y1="{cy0 + 40}" x2="0" y2="{cy0 + ROWS * py - 40}">
-<stop offset="0" stop-color="#ffe0d0"/><stop offset=".3" stop-color="{HOT}"/><stop offset=".6" stop-color="{RED}"/><stop offset="1" stop-color="#7a0b00"/></linearGradient>
-<radialGradient id="floor" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="{RED}" stop-opacity=".35"/><stop offset="1" stop-color="{RED}" stop-opacity="0"/></radialGradient>
-<path id="ring" d="M 46 462 a 330 56 0 1 0 660 0 a 330 56 0 1 0 -660 0 a 330 56 0 1 0 660 0 a 330 56 0 1 0 -660 0"/></defs>''',
+         f"""<defs>
+<radialGradient id="floor" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="{RED}" stop-opacity=".30"/><stop offset="1" stop-color="{RED}" stop-opacity="0"/></radialGradient>
+<linearGradient id="spot" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".07"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<linearGradient id="fade" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".9"/><stop offset=".35" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<mask id="refl" maskUnits="userSpaceOnUse" x="0" y="{floor:.0f}" width="{W}" height="{H - floor:.0f}"><rect x="0" y="{floor:.0f}" width="{W}" height="{H - floor:.0f}" fill="url(#fade)"/></mask>
+<filter id="white"><feColorMatrix values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 1 0"/></filter>
+<mask id="carmask" maskUnits="userSpaceOnUse" x="0" y="0" width="{W}" height="{H}"><use href="#car" filter="url(#white)"/></mask>
+<linearGradient id="shine" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="{W}" y2="260">
+<stop offset=".40" stop-color="#fff" stop-opacity="0"/><stop offset=".47" stop-color="#fff" stop-opacity=".5"/><stop offset=".50" stop-color="#fff" stop-opacity="0"/>
+<animateTransform attributeName="gradientTransform" type="translate" values="-1100 0;-1100 0;1100 0" keyTimes="0;.45;1" dur="5s" repeatCount="indefinite"/></linearGradient>
+<g id="car">{px_text(g, pal, x0, y0, p)}</g>
+</defs>""",
          f'<rect width="{W}" height="{H}" rx="14" fill="{BG}"/>',
-         f'<ellipse cx="376" cy="462" rx="420" ry="110" fill="url(#floor)"/>']
+         f'<g class="beam"><polygon points="330,0 670,0 900,{floor:.0f} 100,{floor:.0f}" fill="url(#spot)"/></g>',
+         f'<ellipse cx="{W / 2}" cy="{floor:.0f}" rx="470" ry="70" fill="url(#floor)"/>']
 
-    # speed streaks in the background (text dashes scrolling)
-    b.append('<g class="lines" opacity=".22">')
-    for i, y in enumerate(range(176, 540, 26)):
+    b.append('<g class="lines" opacity=".16">')
+    for i, y in enumerate(range(250, 600, 24)):
         s = ("━━━━  ─ ─   ━━   ─────   ━  " * 9)[(i * 7) % 11:]
-        b.append(f'<g style="animation-delay:-{i * .13:.2f}s">{text(-10, y, s, 9, RED if i % 3 else GOLD, f"style=\"animation-delay:-{i * .29:.2f}s;animation-duration:{.7 + (i % 4) * .25:.2f}s\"")}</g>')
+        b.append(text(-10, y, s, 9, RED if i % 3 else GOLD, f'style="animation-delay:-{i * .29:.2f}s;animation-duration:{.7 + (i % 4) * .25:.2f}s"'))
     b.append("</g>")
 
-    # turntable ring: characters marching around an ellipse
-    circ = 2 * math.pi * math.sqrt((330 ** 2 + 56 ** 2) / 2)
-    ring = ("─ · " * 200)[:int(circ / 7.2)]
-    b.append(f'<text font-size="12" fill="{RED}" opacity=".55" filter="url(#glow)" textLength="{circ:.0f}" lengthAdjust="spacingAndGlyphs">'
-             f'<textPath href="#ring" startOffset="0">{esc(ring)}<animate attributeName="startOffset" from="0" to="{circ:.0f}" dur="{period}s" repeatCount="indefinite"/></textPath></text>')
+    # car, floor reflection, light sweep over the paint
+    b.append(f'<g mask="url(#refl)" opacity=".28"><use href="#car" transform="translate(0 {2 * floor:.1f}) scale(1 -1)"/></g>')
+    b.append(f'<line x1="40" y1="{floor:.1f}" x2="{W - 40}" y2="{floor:.1f}" stroke="{RED}" stroke-opacity=".25"/>')
+    b.append('<use href="#car"/>')
+    b.append(f'<rect width="{W}" height="{H}" fill="url(#shine)" mask="url(#carmask)"/>')
 
-    # the car: n pre-rendered frames, one visible at a time
-    b.append(f'<g font-size="{py * 1.02:.1f}" xml:space="preserve">')
-    for i, rows in enumerate(fr):
-        b.append(f'<g class="fr" style="animation-delay:{i * period / n:.3f}s">' + ascii_layers(rows, cx0, cy0, px, py) + "</g>")
-    b.append("</g>")
-
-    # header bar
     b.append(text(26, 34, "● ● ●", 12, RED) + text(80, 34, "zh-nico@maranello:~/garage", 12, DIM))
     b.append(typed(300, 34, "$ ./ignite --model F40 --colour rosso-corsa", .2, 12, INK))
     b.append(f'<line x1="20" y1="48" x2="{W - 20}" y2="48" stroke="{RED}" stroke-opacity=".3" stroke-dasharray="2 4"/>')
 
-    # title: stroke-drawn then filled, with a glitch ghost
+    eg, epal = emblem_grid()
+    b.append(px_text(eg, epal, 36, 66, 4.2))
     b.append(f'<g font-size="60" font-weight="700" letter-spacing="6">'
-             f'<text x="36" y="118" class="gl" fill="{GOLD}" opacity="0">ZH-NICO</text>'
-             f'<text x="36" y="118" class="draw" filter="url(#glow)">ZH-NICO</text></g>')
-    b.append(typed(40, 142, "Software Developer · Application Development · Switzerland", 2.4, 13, HOT))
+             f'<text x="116" y="122" class="gl" fill="{GOLD}" opacity="0">ZH-NICO</text>'
+             f'<text x="116" y="122" class="draw" filter="url(#glow)">ZH-NICO</text></g>')
+    b.append(typed(120, 148, "Software Developer · Application Development · Switzerland", 2.4, 13, HOT))
 
-    # HUD spec sheet
-    hx, hy = 686, 92
+    hx, hy = 690, 76
     spec = [("MODEL", "F40 · 1987"), ("ENGINE", "2.9 L V8 twin-turbo"), ("POWER", "478 PS @ 7000 rpm"),
-            ("TORQUE", "577 Nm @ 4000 rpm"), ("V-MAX", "324 km/h"), ("WEIGHT", "1100 kg dry"),
-            ("DRIVER", "ZH-NICO"), ("STATUS", "pushing commits")]
+            ("TORQUE", "577 Nm @ 4000 rpm"), ("V-MAX", "324 km/h"), ("WEIGHT", "1100 kg dry")]
     b.append(text(hx, hy, "┌─ SPEC SHEET ────────────────────┐", 12, RED, pitch=7.2))
     for i, (k, v) in enumerate(spec):
-        y = hy + 22 + i * 21
+        y = hy + 20 + i * 19
         b.append(text(hx, y, "│", 12, RED, pitch=7.2) + text(hx + 7.2 * 33, y, "│", 12, RED, pitch=7.2))
         b.append(text(hx + 14, y, k, 11, DIM))
-        b.append(typed(hx + 74, y, v, 1.0 + i * .45, 12, GOLD if k == "DRIVER" else INK, pitch=7.2))
-    yb = hy + 22 + len(spec) * 21 - 6
+        b.append(typed(hx + 74, y, v, 1.0 + i * .45, 12, INK, pitch=7.2))
+    yb = hy + 20 + len(spec) * 19 - 6
     b.append(text(hx, yb, "└─────────────────────────────────┘", 12, RED, pitch=7.2))
-    b.append(text(hx + 6, yb + 26, "RPM", 10, DIM))
-    # live rev bar under the spec sheet
-    for i in range(18):
-        c = "#30d158" if i < 9 else GOLD if i < 14 else RED
-        b.append(f'<g opacity=".15">{text(hx + 36 + i * 9.6, yb + 27, "▮", 13, c)}'
-                 f'<animate attributeName="opacity" values=".15;.15;1;1;.15" keyTimes="0;{i / 30:.3f};{i / 30 + .02:.3f};.7;1" dur="1.6s" repeatCount="indefinite"/></g>')
-    b.append(text(hx + 6, yb + 54, "LAP", 10, DIM) + text(hx + 36, yb + 54, "1:27.4", 13, INK) +
-             text(hx + 112, yb + 54, "Δ -0.38", 13, "#30d158") + text(hx + 182, yb + 54, "█", 13, RED, 'class="blink"'))
 
-    b.append(text(26, H - 16, "▲ 360° live ascii render · 48 frames · pure svg", 10, DIM))
-    b.append(text(W - 236, H - 16, "ROSSO CORSA  #FF2800", 10, RED))
-    b.append(frame_overlay(W, H))
-    return svg(W, H, "".join(b), "ZH-NICO — rotating ASCII F40")
+    b.append(text(26, H - 16, "▲ every pixel is a monospace █ · real proportions 4358 × 1970 × 1124 mm", 10, DIM))
+    b.append(text(W - 170, H - 16, "ROSSO CORSA  #FF2800", 10, RED))
+    b.append(f'<rect width="{W}" height="{H}" fill="url(#vig)" opacity=".7"/>'
+             f'<rect x=".5" y=".5" width="{W - 1}" height="{H - 1}" rx="14" fill="none" stroke="{RED}" stroke-opacity=".35"/>')
+    return svg(W, H, "".join(b), "ZH-NICO: F40 rendered in monospace text")
+
+
+# ---------------------------------------------------------------- 360 turntable
+
+def turntable(n=24, period=7.2):
+    W, H = 1000, 300
+    p, cw, ch = 4.2, 140, 54
+    x0, y0 = 24, 30
+    thetas = [np.pi + 0.62 + 2 * np.pi * i / n for i in range(n)]
+    grids, pal = car_px(thetas, cw, ch, 12, pitch=0.24, dist=9.0, fit=0.96)
+    slot = 100 / n
+    css = BASE_CSS + f""".fr{{visibility:hidden;animation:spin {period}s infinite}}
+@keyframes spin{{0%{{visibility:visible}}{slot:.4f}%{{visibility:hidden}}100%{{visibility:hidden}}}}"""
+    b = [f"<style>{css}</style>", common_defs(), f'<rect width="{W}" height="{H}" rx="14" fill="{BG}"/>',
+         f'<ellipse cx="{x0 + cw * p / 2}" cy="{y0 + ch * p - 18}" rx="290" ry="34" fill="none" stroke="{RED}" stroke-opacity=".35" stroke-dasharray="2 6">'
+         f'<animate attributeName="stroke-dashoffset" from="0" to="-80" dur="2s" repeatCount="indefinite"/></ellipse>']
+    for i, g in enumerate(grids):
+        deg = (360 * i // n) % 360
+        b.append(f'<g class="fr" style="animation-delay:{i * period / n:.3f}s">{px_text(g, pal, x0, y0, p, gap=30)}'
+                 + text(712, 150, f"{deg:03d}°", 44, INK, 'font-weight="700"') + "</g>")
+    tx = 640
+    b.append(text(tx, 52, "360° TURNTABLE", 13, RED, 'letter-spacing="3"'))
+    b.append(text(tx, 74, f"every pixel is a █ glyph · {n} frames", 11, DIM))
+    b.append(text(tx, 150, "θ", 44, DIM))
+    for i, (k, v) in enumerate([("LENGTH", "4358 mm"), ("WIDTH", "1970 mm"), ("HEIGHT", "1124 mm"), ("WHEELBASE", "2450 mm")]):
+        b.append(text(tx, 196 + i * 20, k, 10, DIM) + text(tx + 96, 196 + i * 20, v, 12, INK))
+    b.append(f'<rect width="{W}" height="{H}" fill="url(#vig)" opacity=".7"/>'
+             f'<rect x=".5" y=".5" width="{W - 1}" height="{H - 1}" rx="14" fill="none" stroke="{RED}" stroke-opacity=".35"/>')
+    return svg(W, H, "".join(b), "360 degree turntable of the F40 in monospace pixels")
 
 
 # ---------------------------------------------------------------- telemetry (tach + driver card)
@@ -387,7 +441,7 @@ def card(no, name, desc, lang, col, k):
 
 # ---------------------------------------------------------------- footer (side-view pass + chequered flag)
 
-def footer(side):
+def footer():
     W, H = 1000, 200
     b = [f"<style>{BASE_CSS}.drive{{animation:drive 5s cubic-bezier(.6,0,.4,1) infinite}}"
          f"@keyframes drive{{0%{{transform:translateX(-420px)}}55%{{transform:translateX(1100px)}}100%{{transform:translateX(1100px)}}}}"
@@ -398,14 +452,15 @@ def footer(side):
     b.append(f'<g>{text(0, 186, "━━━━      " * 15, 12, GOLD, "opacity=\".35\"", pitch=7.2)}'
              f'<animateTransform attributeName="transform" type="translate" from="0 0" to="-72 0" dur=".25s" repeatCount="indefinite"/></g>')
     # side-view F40 passing by, with exhaust flames
-    rows = [r for r in side if any(c and c != "S" for _, c in r)]
-    lo = min(next(i for i, (_, c) in enumerate(r) if c and c != "S") for r in rows)
-    rows = [r[lo:] for r in rows]
-    fpx, fpy = 2.1, 3.5
-    y0 = 166 - len(rows) * fpy
-    b.append(f'<g class="drive"><g font-size="{fpy:.1f}" xml:space="preserve" filter="url(#glow)">{ascii_layers(rows, 0, y0, fpx, fpy)}</g>')
+    (g,), pal = car_px([0.0], 200, 48, 24, pitch=0.06, dist=16.0, fit=0.99)
+    used = np.nonzero((g >= 0).any(1))[0]
+    rows = g[used[0]:used[-1] + 1]
+    fpy = 2.0
+    y0 = 167 - len(rows) * fpy
+    lead = int(np.nonzero((rows >= 0).any(0))[0][0])
+    b.append(f'<g class="drive">{px_text(rows, pal, 0, y0, fpy)}')
     ey = y0 + (len(rows) - 7) * fpy
-    b.append(f'<g>{text(-14, ey, "≈≈~~", 11, GOLD, "filter=\"url(#glow2)\"")}<animate attributeName="opacity" values="1;.3;1;.6;1" dur=".2s" repeatCount="indefinite"/></g>')
+    b.append(f'<g>{text(lead * fpy - 22, ey, "≈≈~~", 11, GOLD, "filter=\"url(#glow2)\"")}<animate attributeName="opacity" values="1;.3;1;.6;1" dur=".2s" repeatCount="indefinite"/></g>')
     b.append(f'{text(-220, ey - 30, "─── ── ─  ", 12, DIM)}{text(-260, ey - 4, "──── ─ ── ", 12, DIM)}</g>')
     # chequered flag (columns wave with staggered delays)
     fx, fy = 860, 40
@@ -418,16 +473,14 @@ def footer(side):
                 b.append(text(fx + c * 13, fy + r * 14, "██", 13, INK, f'style="animation-delay:-{c * .17:.2f}s"', pitch=6.5))
     b.append("</g>")
     b.append(text(40, 44, "SEE YOU ON TRACK", 22, INK, 'font-weight="700" letter-spacing="8" filter="url(#glow)"'))
-    b.append(text(42, 66, "thanks for the visit — drop a ★ if you liked the ride", 11, DIM))
     b.append(frame_overlay(W, H))
     return svg(W, H, "".join(b), "Footer: F40 driving past a chequered flag")
 
 
 def main():
     os.makedirs(OUT, exist_ok=True)
-    fr = frames(48, fit=0.88)
-    assert len(fr) == 48 and all(len(f) == ROWS for f in fr)
-    files = {"hero.svg": hero(fr), "telemetry.svg": telemetry(), "gearbox.svg": gearbox(), "footer.svg": footer(render([0.0], cols=200, rows=60, pitch=0.14)[0])}
+    files = {"hero.svg": hero(), "turntable.svg": turntable(), "telemetry.svg": telemetry(),
+             "gearbox.svg": gearbox(), "footer.svg": footer()}
     for k, p in enumerate(PROJECTS):
         files[f"pit-{p[1]}.svg"] = card(*p, k)
     for name, data in files.items():

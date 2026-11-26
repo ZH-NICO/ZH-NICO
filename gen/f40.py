@@ -14,8 +14,10 @@ WHEELS = [(FX, 0.314, 0.66, 0.905), (RX, 0.333, 0.60, 0.955)]  # x, radius, inne
 # station: d from nose, centre-top z, crown edge (y,z), shoulder (y,z), max width (y,z), rocker (y,z)
 ST = np.array([
     # d     zc    yc    zce   ys    zs    yw     zw    yr    zr
-    [0.00, 0.35, 0.40, 0.35, 0.66, 0.36, 0.80, 0.30, 0.78, 0.13],
-    [0.12, 0.45, 0.40, 0.45, 0.70, 0.48, 0.90, 0.41, 0.88, 0.12],
+    [0.00, 0.35, 0.34, 0.35, 0.52, 0.36, 0.60, 0.30, 0.58, 0.14],
+    [0.05, 0.40, 0.38, 0.40, 0.62, 0.42, 0.76, 0.36, 0.74, 0.13],
+    [0.15, 0.47, 0.40, 0.47, 0.70, 0.51, 0.87, 0.43, 0.85, 0.12],
+    [0.30, 0.53, 0.38, 0.53, 0.72, 0.60, 0.925, 0.50, 0.90, 0.12],
     [0.50, 0.59, 0.36, 0.58, 0.72, 0.67, 0.95, 0.55, 0.93, 0.12],
     [0.98, 0.65, 0.34, 0.64, 0.73, 0.77, 0.965, 0.62, 0.95, 0.13],
     [1.40, 0.75, 0.40, 0.74, 0.76, 0.76, 0.965, 0.64, 0.95, 0.14],
@@ -61,6 +63,11 @@ def _smooth(a, k, axis):
     return (np.take(c, range(k, k + n), axis=axis) - np.take(c, range(0, n), axis=axis)) / k
 
 
+def smooth(a, b, t):
+    t = np.clip((t - a) / (b - a), 0, 1)
+    return t * t * (3 - 2 * t)
+
+
 def station(d):
     """Profile keypoints as (y, z) for every d -> shape (len(d), 5, 2)."""
     c = [np.interp(d, ST[:, 0], ST[:, k]) for k in range(1, 10)]
@@ -99,6 +106,13 @@ def build():
     for _ in range(2):  # smooth surface: rounded shoulders, no faceting between stations
         Y, Z = _smooth(_smooth(Y, 15, 0), 7, 1), _smooth(_smooth(Z, 15, 0), 7, 1)
     Y[:, 0] = 0
+    Dg = d[:, None] * np.ones_like(Y)
+    side = sid[None, :] == 3
+    tt = st[None, :] * np.ones_like(Y)
+    Y = Y + side * 0.03 * np.sin(np.pi * np.clip(tt * 1.25, 0, 1))                          # convex flank
+    scoop = side * smooth(0.0, 1.0, np.clip((Dg - 1.70) / 0.15, 0, 1)) * smooth(0.0, 1.0, np.clip((2.95 - Dg) / 0.2, 0, 1))
+    scoop = scoop * smooth(0.0, 1.0, np.clip((0.44 - Z) / 0.03, 0, 1)) * smooth(0.0, 1.0, np.clip((Z - 0.19) / 0.04, 0, 1))
+    Y = Y - 0.045 * scoop                                                                     # recessed lower door
     G = np.stack([X, Y, Z], -1)
     nrm = np.cross(np.gradient(G, axis=1), np.gradient(G, axis=0))
     ref = np.stack([0 * X, Y, Z - 0.35], -1)
@@ -159,26 +173,31 @@ def build():
             for cy in (-0.12, 0.0, 0.12):
                 m[(yy - cy) ** 2 + (zz - 0.44) ** 2 < 0.045 ** 2] = RIM                # triple exhaust
         else:
-            m[(ay < 0.62) & (zz > 0.155) & (zz < 0.27)] = TRIM                       # wide front intake
-            m[(ay > 0.66) & (ay < 0.76) & (zz > 0.17) & (zz < 0.25)] = TRIM          # brake ducts
+            m[(ay < 0.44) & (zz > 0.17) & (zz < 0.29)] = TRIM                        # wide front intake
+            m[(ay > 0.48) & (ay < 0.56) & (zz > 0.18) & (zz < 0.26)] = TRIM          # brake ducts
         z0 = 0 * yy[ok]
         add([2.18 - dd + z0, yy[ok], zz[ok]], [nx + z0, z0, (0.6 if not tail else 0.05) + z0], m[ok])
 
     # ---- rear wing between fins, fins, mirrors
-    xw, yw = np.meshgrid(2.18 - np.arange(4.02, 4.35, 0.008), np.linspace(-0.87, 0.87, 200))
-    zw = 1.08 + (2.18 - 4.02 - xw) * 0.13
+    xw, yw = np.meshgrid(2.18 - np.arange(4.04, 4.35, 0.006), np.linspace(-0.9, 0.9, 260))
+    zw = 1.10 + (2.18 - 4.04 - xw) * 0.13
     add([xw, yw, zw], [-0.13 + 0 * xw, 0 * xw, 1 + 0 * xw], BODY)
     add([xw, yw, zw - 0.035], [0 * xw, 0 * xw, -1 + 0 * xw], TRIM)
-    xf, zf = np.meshgrid(2.18 - np.arange(3.72, 4.36, 0.008), np.arange(0.85, 1.13, 0.008))
-    ok = zf < np.interp(2.18 - xf, [3.72, 4.0, 4.36], [0.99, 1.10, 1.13])
+    xf, zf = np.meshgrid(2.18 - np.arange(3.90, 4.36, 0.006), np.arange(0.88, 1.15, 0.006))
+    ok = zf < np.interp(2.18 - xf, [3.90, 4.05, 4.36], [0.98, 1.14, 1.15])
     for side in (1, -1):
-        for yv, sgn in ((0.93, 1), (0.87, -1)):
+        for yv, sgn in ((0.93, 1), (0.895, -1)):
             z0 = 0 * xf[ok]
             add([xf[ok], side * yv + z0, zf[ok]], [z0, side * sgn + z0, z0], BODY)
-        xm, zm = np.meshgrid(np.arange(0.44, 0.54, 0.006), np.arange(0.84, 0.91, 0.006))
-        add([xm, side * 1.04 + 0 * xm, zm], [0.3 + 0 * xm, side + 0 * xm, 0.2 + 0 * xm], BODY)
-        xm, ym = np.meshgrid(np.arange(0.44, 0.54, 0.006), np.arange(0.97, 1.04, 0.006))
-        add([xm, side * ym, 0.91 + 0 * xm], [0 * xm, 0 * xm, 1 + 0 * xm], BODY)
+        # door mirror on a short stalk from the window base
+        xm, zm = np.meshgrid(np.arange(0.46, 0.56, 0.005), np.arange(0.86, 0.93, 0.005))
+        add([xm, side * 0.97 + 0 * xm, zm], [0.3 + 0 * xm, side + 0 * xm, 0.2 + 0 * xm], BODY)
+        xm, ym = np.meshgrid(np.arange(0.46, 0.56, 0.005), np.arange(0.88, 0.97, 0.005))
+        add([xm, side * ym, 0.93 + 0 * xm], [0 * xm, 0 * xm, 1 + 0 * xm], BODY)
+        xm, zm = np.meshgrid(np.arange(0.46, 0.56, 0.005), np.arange(0.86, 0.93, 0.005))
+        add([0.56 + 0 * xm, side * (0.88 + (xm - 0.46) * 0.9), zm], [1 + 0 * xm, 0 * xm, 0 * xm], BODY)
+        xs_, ys_ = np.meshgrid(np.arange(0.50, 0.53, 0.005), np.arange(0.80, 0.89, 0.005))
+        add([xs_, side * ys_, 0.875 + 0 * xs_], [0 * xs_, 0 * xs_, 1 + 0 * xs_], TRIM)
 
     # ---- wheels: tread, sidewall, 5-spoke star rim, dark wheel wells
     for wx, r, yin, yout in WHEELS:
@@ -249,7 +268,7 @@ def render_px(thetas, W, H, pitch=0.2, dist=9.0, fit=0.96, ss=2, bg=(0.03, 0.03,
         fres = 0.06 + 0.94 * (1 - ndv) ** 5
         col = np.zeros((len(P), 3))
         paint = np.array([0.86, 0.07, 0.025])
-        body = (M == BODY) | ((M == LOUVRE) & (np.sin(P[:, 0] * 52) > 0.2))
+        body = (M == BODY) | ((M == LOUVRE) & (np.sin(P[:, 0] * 30) > 0.1))
         col[body] = (paint * (0.16 + 0.95 * diff[body, None] + 0.25 * dfill[body, None])
                      + env[body] * (0.10 + 0.6 * fres[body, None]) + 1.2 * spec[body, None] ** 40)
         g = M == GLASS
@@ -267,7 +286,7 @@ def render_px(thetas, W, H, pitch=0.2, dist=9.0, fit=0.96, ss=2, bg=(0.03, 0.03,
         dl, yl = 2.18 - P[lp, 0], np.abs(P[lp, 1])
         reflector = ((dl > 0.11) & (dl < 0.27) & (yl > 0.55) & (yl < 0.75)).astype(float)[:, None]
         col[lp] = (np.array([0.08, 0.10, 0.12]) + env[lp] * (0.35 + 0.5 * fres[lp, None]) + 1.5 * spec[lp, None] ** 50
-                   + reflector * np.array([0.45, 0.48, 0.5]))
+                   + reflector * np.array([0.16, 0.17, 0.18]))
         for i, rgb in enumerate(DECAL_RGB):
             dm = M == DECAL + i
             col[dm] = np.array(rgb) * (0.8 + 0.25 * diff[dm, None])

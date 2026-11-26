@@ -88,7 +88,7 @@ def hero():
     W, H = 1000, 640
     p, cw, ch = 2.8, 340, 132
     x0, y0 = (W - cw * p) / 2, 196
-    (g,), pal = car_px([np.pi + 0.62], cw, ch, 64, pitch=0.16, dist=7.5, fit=0.93)
+    (g,), pal = car_px([np.pi + 0.55], cw, ch, 64, pitch=0.30, dist=13.0, fit=0.93)
     rows_used = np.nonzero((g >= 0).any(1))[0]
     floor = y0 + (rows_used[-1] + 1) * p
     css = BASE_CSS + f"""
